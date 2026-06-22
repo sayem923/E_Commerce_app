@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
 
 class EditProfilePage extends StatefulWidget {
   const EditProfilePage({super.key});
@@ -23,12 +22,18 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   void _loadCurrentData() async {
-    final user = _supabase.auth.currentUser;
-    final data = await _supabase.from('profiles').select().eq('id', user!.id).single();
-    setState(() {
-      _nameController.text = data['full_name'] ?? "";
-      _avatarUrl = data['avatar_url'];
-    });
+    try {
+      final user = _supabase.auth.currentUser;
+      if (user == null) return;
+      
+      final data = await _supabase.from('profiles').select().eq('id', user.id).single();
+      setState(() {
+        _nameController.text = data['full_name'] ?? "";
+        _avatarUrl = data['avatar_url'];
+      });
+    } catch (e) {
+      debugPrint("Error loading profile data: $e");
+    }
   }
 
   Future<void> _pickAndUploadImage() async {
@@ -39,19 +44,27 @@ class _EditProfilePageState extends State<EditProfilePage> {
     setState(() => _isLoading = true);
     try {
       final user = _supabase.auth.currentUser;
+      if (user == null) return;
+
       final bytes = await image.readAsBytes();
-      final path = 'profile_pic/${user!.id}.png';
+      final path = 'profile_pic/${user.id}.png';
 
       await _supabase.storage.from('avatars').uploadBinary(
         path, bytes, fileOptions: const FileOptions(upsert: true, contentType: 'image/png')
       );
 
       final publicUrl = _supabase.storage.from('avatars').getPublicUrl(path);
-      setState(() => _avatarUrl = publicUrl);
       
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Image Uploaded! Save to confirm.")));
+      setState(() {
+        // 🔄 ইমেজ রিফ্রেশ ক্যাশ বাগ এড়াতে টাইমস্ট্যাম্প যোগ করা হয়েছে
+        _avatarUrl = "$publicUrl?t=${DateTime.now().millisecondsSinceEpoch}";
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Image Uploaded! Save to confirm.")));
+      }
     } catch (e) {
-      debugPrint("Error: $e");
+      debugPrint("Upload Error: $e");
     } finally {
       setState(() => _isLoading = false);
     }
@@ -61,17 +74,25 @@ class _EditProfilePageState extends State<EditProfilePage> {
     setState(() => _isLoading = true);
     try {
       final user = _supabase.auth.currentUser;
+      if (user == null) return;
+
+      // ইউআরএল থেকে ক্যাশ কোয়েরি স্ট্রিং রিমুভ করে ডাটাবেজে পিওর লিঙ্ক সেভ করা হচ্ছে
+      String? cleanUrl = _avatarUrl;
+      if (cleanUrl != null && cleanUrl.contains('?t=')) {
+        cleanUrl = cleanUrl.split('?t=')[0];
+      }
+
       await _supabase.from('profiles').update({
         'full_name': _nameController.text.trim(),
-        'avatar_url': _avatarUrl,
-      }).eq('id', user!.id);
+        'avatar_url': cleanUrl,
+      }).eq('id', user.id);
 
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile Updated!")));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile Updated!"), backgroundColor: Colors.green));
       }
     } catch (e) {
-      debugPrint("Error: $e");
+      debugPrint("Update Error: $e");
     } finally {
       setState(() => _isLoading = false);
     }
@@ -80,23 +101,31 @@ class _EditProfilePageState extends State<EditProfilePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Edit Profile"), backgroundColor: Colors.white, foregroundColor: Colors.black, elevation: 0),
+      backgroundColor: const Color(0xFFF8F9FB),
+      appBar: AppBar(
+        title: const Text("Edit Profile", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black87)), 
+        backgroundColor: Colors.white, 
+        foregroundColor: Colors.black, 
+        elevation: 0.5
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(25),
         child: Column(
           children: [
+            const SizedBox(height: 10),
             Stack(
               children: [
                 CircleAvatar(
                   radius: 60,
+                  backgroundColor: Colors.grey[300],
                   backgroundImage: _avatarUrl != null ? NetworkImage(_avatarUrl!) : null,
-                  child: _avatarUrl == null ? const Icon(Icons.person, size: 60) : null,
+                  child: _avatarUrl == null ? const Icon(Icons.person, size: 60, color: Colors.white) : null,
                 ),
                 Positioned(
                   bottom: 0,
                   right: 0,
                   child: GestureDetector(
-                    onTap: _pickAndUploadImage,
+                    onTap: _isLoading ? null : _pickAndUploadImage,
                     child: const CircleAvatar(
                       backgroundColor: Colors.pink,
                       radius: 18,
@@ -112,18 +141,23 @@ class _EditProfilePageState extends State<EditProfilePage> {
               decoration: InputDecoration(
                 labelText: "Full Name",
                 prefixIcon: const Icon(Icons.person_outline),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
               ),
             ),
-            const SizedBox(height: 30),
+            const SizedBox(height: 40),
             ElevatedButton(
               onPressed: _isLoading ? null : _updateProfile,
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.pink,
                 minimumSize: const Size(double.infinity, 55),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                elevation: 1,
               ),
-              child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text("Save Changes", style: TextStyle(color: Colors.white, fontSize: 16)),
+              child: _isLoading 
+                ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) 
+                : const Text("Save Changes", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
             ),
           ],
         ),

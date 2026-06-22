@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'login_page.dart'; // নিশ্চিত হোন আপনার লগইন পেজের ফাইল পাথ ঠিক আছে
+import 'login_page.dart'; 
+import 'vendor_orders_page.dart'; // 🎯 আপনার তৈরি করা অর্ডার পেজটি ইমপোর্ট করুন
+import 'edit_profile_page.dart';   // 🎯 এডিট প্রোফাইল পেজ ইমপোর্ট করুন
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -16,7 +18,6 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget build(BuildContext context) {
     final user = _supabase.auth.currentUser;
     
-    // প্রোফাইল ডেটা রিয়েল-টাইম আনার জন্য স্ট্রিম
     final profileStream = _supabase
         .from('profiles')
         .stream(primaryKey: ['id'])
@@ -29,6 +30,18 @@ class _ProfilePageState extends State<ProfilePage> {
         centerTitle: true,
         backgroundColor: Colors.white,
         elevation: 0,
+        // 🛠️ অ্যাপবারে এডিট প্রোফাইল পেজে যাওয়ার জন্য বাটন যুক্ত করা হলো
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.edit_note_rounded, color: Colors.black87, size: 28),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const EditProfilePage()),
+              );
+            },
+          )
+        ],
       ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: profileStream,
@@ -43,7 +56,6 @@ class _ProfilePageState extends State<ProfilePage> {
             padding: const EdgeInsets.all(20),
             child: Column(
               children: [
-                // প্রোফাইল পিকচার এবং নাম সেকশন
                 Center(
                   child: Column(
                     children: [
@@ -72,15 +84,29 @@ class _ProfilePageState extends State<ProfilePage> {
                 
                 const SizedBox(height: 30),
 
-                // অপশন লিস্ট
-                _buildProfileItem(Icons.shopping_bag_outlined, "My Orders", () {}),
+                // 🛠️ "My Orders" বাটনে ক্লিক করলে কাস্টমার হিসেবে ট্র্যাক পেজে নিয়ে যাবে
+                _buildProfileItem(Icons.shopping_bag_outlined, "My Orders", () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const VendorOrdersPage(isVendor: false), // কাস্টমার ট্র্যাকিং ভিউ
+                    ),
+                  );
+                }),
+                
                 _buildProfileItem(Icons.favorite_border, "Wishlist", () {}),
                 _buildProfileItem(Icons.location_on_outlined, "Shipping Address", () {}),
-                _buildProfileItem(Icons.settings_outlined, "Settings", () {}),
+                
+                // 🛠️ Settings বাটনে ক্লিক করলেও এডিট প্রোফাইলে যাওয়ার ব্যবস্থা করা হলো
+                _buildProfileItem(Icons.settings_outlined, "Settings / Edit Profile", () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const EditProfilePage()),
+                  );
+                }),
                 
                 const Divider(height: 40),
 
-                // --- সাইন আউট বাটন (এটিই আপনার মেইন রিকোয়েস্ট ছিল) ---
                 ListTile(
                   leading: Container(
                     padding: const EdgeInsets.all(8),
@@ -90,15 +116,12 @@ class _ProfilePageState extends State<ProfilePage> {
                   title: const Text("Sign Out", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
                   trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.red),
                   onTap: () async {
-                    // ১. সুপারবেস থেকে লগআউট
                     await _supabase.auth.signOut();
-
-                    // ২. লগইন পেজে পাঠিয়ে দেওয়া এবং আগের সব রুট ক্লিয়ার করা
                     if (context.mounted) {
                       Navigator.pushAndRemoveUntil(
                         context,
                         MaterialPageRoute(builder: (context) => const LoginPage()),
-                        (route) => false, // এটি করলে ব্যাকে টিপলে আর অ্যাপে ঢোকা যাবে না
+                        (route) => false,
                       );
                     }
                   },
@@ -112,7 +135,6 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  // কাস্টম লিস্ট আইটেম উইজেট
   Widget _buildProfileItem(IconData icon, String title, VoidCallback onTap) {
     return Container(
       margin: const EdgeInsets.only(bottom: 15),

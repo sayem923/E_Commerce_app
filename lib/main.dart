@@ -1,7 +1,8 @@
 import 'package:e_commerce_app/login_page.dart';
+import 'package:e_commerce_app/user_home_page.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'home_page.dart'; // সঠিক নাম
+import 'home_page.dart'; 
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,7 +21,7 @@ class MegaMart extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.teal, useMaterial3: true),
-      home: const LoginPage(),
+      home: const HomePage(),
     );
   }
 }

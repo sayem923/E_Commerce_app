@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -16,9 +18,11 @@ class _VendorDashboardState extends State<VendorDashboard> {
   XFile? _imageFile;
   bool _isLoading = false;
 
-  // ক্যাটাগরি লিস্ট (আপনার হোম পেজের সাথে মিল রেখে)
+  final _supabase = Supabase.instance.client;
+
+  
   final List<String> _categories = ["Home", "Fashion", "Gadgets", "Others"];
-  String _selectedCategory = "Home"; // ডিফল্ট সিলেক্টেড
+  String _selectedCategory = "Home"; 
 
   // ১. ব্যানার আপলোড
   Future<void> _uploadBanner() async {
@@ -33,12 +37,11 @@ class _VendorDashboardState extends State<VendorDashboard> {
 
     setState(() => _isLoading = true);
     try {
-      final supabase = Supabase.instance.client;
       final fileName = 'banners/${DateTime.now().millisecondsSinceEpoch}.jpg';
-      await supabase.storage.from('product_images').uploadBinary(fileName, await banner.readAsBytes());
-      final imageUrl = supabase.storage.from('product_images').getPublicUrl(fileName);
+      await _supabase.storage.from('product_images').uploadBinary(fileName, await banner.readAsBytes());
+      final imageUrl = _supabase.storage.from('product_images').getPublicUrl(fileName);
 
-      await supabase.from('banners').insert({'image_url': imageUrl});
+      await _supabase.from('banners').insert({'image_url': imageUrl});
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Professional Banner Added!")));
       }
@@ -49,8 +52,14 @@ class _VendorDashboardState extends State<VendorDashboard> {
     }
   }
 
-  // ২. প্রোডাক্ট আপলোড (ক্যাটাগরি সহ)
+  // ২. প্রোডাক্ট আপলোড (ক্যাটাগরি এবং ভেন্ডর আইডি সহ)
   Future<void> _uploadProduct() async {
+    final currentUser = _supabase.auth.currentUser;
+    if (currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please login as vendor first!")));
+      return;
+    }
+
     if (_name.text.isEmpty || _price.text.isEmpty || _imageFile == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields and select image")));
       return;
@@ -58,25 +67,24 @@ class _VendorDashboardState extends State<VendorDashboard> {
     
     setState(() => _isLoading = true);
     try {
-      final supabase = Supabase.instance.client;
       final fileName = 'products/${DateTime.now().millisecondsSinceEpoch}.jpg';
-      await supabase.storage.from('product_images').uploadBinary(fileName, await _imageFile!.readAsBytes());
-      final imageUrl = supabase.storage.from('product_images').getPublicUrl(fileName);
+      await _supabase.storage.from('product_images').uploadBinary(fileName, await _imageFile!.readAsBytes());
+      final imageUrl = _supabase.storage.from('product_images').getPublicUrl(fileName);
 
-      // ডাটাবেসে ডাটা পাঠানো
-      await supabase.from('products').insert({
+      // ডাটাবেসে ডাটা পাঠানো (vendor_id যুক্ত করা হয়েছে)
+      await _supabase.from('products').insert({
         'name': _name.text.trim(),
         'price': double.parse(_price.text.trim()),
         'description': _desc.text.trim(),
         'image_url': imageUrl,
-        'category': _selectedCategory, // এই লাইনটি ক্যাটাগরি সেভ করবে
+        'category': _selectedCategory, 
+        'vendor_id': currentUser.id, 
       });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Product Published!"), backgroundColor: Colors.green));
       }
       
-      // ফিল্ড ক্লিয়ার করা
       _name.clear(); _price.clear(); _desc.clear(); 
       setState(() => _imageFile = null);
       
@@ -141,7 +149,9 @@ class _VendorDashboardState extends State<VendorDashboard> {
                         )
                       : ClipRRect(
                           borderRadius: BorderRadius.circular(15), 
-                          child: Image.network(_imageFile!.path, fit: BoxFit.cover)
+                          child: kIsWeb 
+                              ? Image.network(_imageFile!.path, fit: BoxFit.cover)
+                              : Image.file(File(_imageFile!.path), fit: BoxFit.cover),
                         ),
                   ),
                 ),

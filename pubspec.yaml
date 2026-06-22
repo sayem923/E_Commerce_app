@@ -42,6 +42,14 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.13.1 # প্যাকেজটি যুক্ত করুন
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/app_logo.jpeg" # আপনার ছবির সঠিক পাথ দিন
+  min_sdk_android: 21 # আপনার প্রোজেক্টের min_sdk অনুযায়ী দিবেন
+
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
