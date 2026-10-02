@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'review_widgets.dart';
 
 class VendorProductDetailsPage extends StatelessWidget {
   final Map<String, dynamic> product;
@@ -16,16 +18,21 @@ class VendorProductDetailsPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // প্রোডাক্ট ইমেজ
-            Image.network(
-              product['image_url'] ?? '', 
+            
+            CachedNetworkImage(
+              imageUrl: product['image_url'] ?? '', 
               height: 300, 
               width: double.infinity, 
               fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) => Container(
+              placeholder: (context, url) => Container(
+                height: 300,
+                color: Colors.grey.shade200,
+                child: const Center(child: CircularProgressIndicator(color: Colors.orange)),
+              ),
+              errorWidget: (context, url, error) => Container(
                 height: 300,
                 color: Colors.grey,
-                child: Icon(Icons.broken_image, size: 50, color: Colors.white),
+                child: const Icon(Icons.broken_image, size: 50, color: Colors.white),
               ),
             ),
             Padding(
@@ -42,6 +49,19 @@ class VendorProductDetailsPage extends StatelessWidget {
                     product['name'] ?? '', 
                     style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)
                   ),
+                  if ((double.tryParse(product['avg_rating']?.toString() ?? '0') ?? 0) > 0) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        StarRatingDisplay(rating: double.tryParse(product['avg_rating']?.toString() ?? '0') ?? 0, size: 16),
+                        const SizedBox(width: 6),
+                        Text(
+                          "${product['avg_rating']} (${product['review_count'] ?? 0} reviews)",
+                          style: const TextStyle(color: Colors.grey, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 5),
                   Chip(
                     label: Text("Category: ${product['category'] ?? 'Others'}"),

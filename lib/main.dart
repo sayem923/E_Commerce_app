@@ -1,8 +1,6 @@
-import 'package:e_commerce_app/login_page.dart';
-import 'package:e_commerce_app/user_home_page.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'home_page.dart'; 
+import 'auth_gate.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,7 +11,7 @@ void main() async {
   runApp(const MegaMart());
 }
 
-class MegaMart extends StatelessWidget {
+class MegaMart extends StatelessWidget{
   const MegaMart({super.key});
 
   @override
@@ -21,7 +19,7 @@ class MegaMart extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.teal, useMaterial3: true),
-      home: const HomePage(),
+      home: const AuthGate(),
     );
   }
 }

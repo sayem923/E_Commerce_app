@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'sales_analytics_page.dart';
 
 class VendorDashboard extends StatefulWidget {
   const VendorDashboard({super.key});
@@ -15,7 +16,8 @@ class _VendorDashboardState extends State<VendorDashboard> {
   final _name = TextEditingController();
   final _price = TextEditingController();
   final _desc = TextEditingController();
-  XFile? _imageFile;
+  final _stock = TextEditingController(text: "1");
+  List<XFile> _imageFiles = [];
   bool _isLoading = false;
 
   final _supabase = Supabase.instance.client;
@@ -47,6 +49,11 @@ class _VendorDashboardState extends State<VendorDashboard> {
       }
     } catch (e) {
       debugPrint("$e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Banner Upload Failed: $e"), backgroundColor: Colors.redAccent, duration: const Duration(seconds: 8)),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -60,39 +67,61 @@ class _VendorDashboardState extends State<VendorDashboard> {
       return;
     }
 
-    if (_name.text.isEmpty || _price.text.isEmpty || _imageFile == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields and select image")));
+    if (_name.text.isEmpty || _price.text.isEmpty || _imageFiles.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields and select at least one image")));
       return;
     }
     
     setState(() => _isLoading = true);
     try {
-      final fileName = 'products/${DateTime.now().millisecondsSinceEpoch}.jpg';
-      await _supabase.storage.from('product_images').uploadBinary(fileName, await _imageFile!.readAsBytes());
-      final imageUrl = _supabase.storage.from('product_images').getPublicUrl(fileName);
+      // 🖼️ একাধিক ছবি আপলোড করা হচ্ছে
+      final List<String> imageUrls = [];
+      for (final file in _imageFiles) {
+        final fileName = 'products/${DateTime.now().millisecondsSinceEpoch}_${imageUrls.length}.jpg';
+        await _supabase.storage.from('product_images').uploadBinary(fileName, await file.readAsBytes());
+        imageUrls.add(_supabase.storage.from('product_images').getPublicUrl(fileName));
+      }
 
-      // ডাটাবেসে ডাটা পাঠানো (vendor_id যুক্ত করা হয়েছে)
+      // ডাটাবেসে ডাটা পাঠানো (vendor_id, stock ও একাধিক ছবি যুক্ত করা হয়েছে)
+      // image_url = প্রথম ছবি (cover/thumbnail হিসেবে ব্যবহার হবে cart, order, ইত্যাদিতে)
+      // image_urls = সব ছবির array (product details পেজে gallery হিসেবে দেখাবে)
       await _supabase.from('products').insert({
         'name': _name.text.trim(),
         'price': double.parse(_price.text.trim()),
         'description': _desc.text.trim(),
-        'image_url': imageUrl,
+        'image_url': imageUrls.first,
+        'image_urls': imageUrls,
         'category': _selectedCategory, 
         'vendor_id': currentUser.id, 
+        'stock': int.tryParse(_stock.text.trim()) ?? 0,
       });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Product Published!"), backgroundColor: Colors.green));
       }
       
-      _name.clear(); _price.clear(); _desc.clear(); 
-      setState(() => _imageFile = null);
+      _name.clear(); _price.clear(); _desc.clear(); _stock.text = "1";
+      setState(() => _imageFiles = []);
       
     } catch (e) {
       debugPrint("Upload Error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Product Upload Failed: $e"), backgroundColor: Colors.redAccent, duration: const Duration(seconds: 8)),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _price.dispose();
+    _desc.dispose();
+    _stock.dispose();
+    super.dispose();
   }
 
   @override
@@ -102,6 +131,15 @@ class _VendorDashboardState extends State<VendorDashboard> {
         title: const Text("Vendor Panel", style: TextStyle(color: Colors.white)),
         backgroundColor: Colors.orange[800],
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.bar_chart_rounded, color: Colors.white),
+            tooltip: "Sales Analytics",
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (context) => const SalesAnalyticsPage()));
+            },
+          ),
+        ],
       ),
       body: _isLoading 
         ? const Center(child: CircularProgressIndicator(color: Colors.orange)) 
@@ -126,35 +164,79 @@ class _VendorDashboardState extends State<VendorDashboard> {
                 const Text("Add New Product", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 15),
 
-                // ইমেজ সিলেক্টর
+                // ইমেজ সিলেক্টর (একাধিক ছবি)
                 GestureDetector(
                   onTap: () async {
-                    final img = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 80);
-                    if (img != null) setState(() => _imageFile = img);
+                    final imgs = await ImagePicker().pickMultiImage(imageQuality: 80);
+                    if (imgs.isNotEmpty) {
+                      setState(() => _imageFiles = [..._imageFiles, ...imgs]);
+                    }
                   },
                   child: Container(
-                    height: 180, width: double.infinity,
+                    height: 100, width: double.infinity,
                     decoration: BoxDecoration(
                       color: Colors.grey[100], 
                       borderRadius: BorderRadius.circular(15),
                       border: Border.all(color: Colors.grey[300]!)
                     ),
-                    child: _imageFile == null 
-                      ? const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.add_a_photo, size: 50, color: Colors.grey),
-                            Text("Select Product Image", style: TextStyle(color: Colors.grey)),
-                          ],
-                        )
-                      : ClipRRect(
-                          borderRadius: BorderRadius.circular(15), 
-                          child: kIsWeb 
-                              ? Image.network(_imageFile!.path, fit: BoxFit.cover)
-                              : Image.file(File(_imageFile!.path), fit: BoxFit.cover),
-                        ),
+                    child: const Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.add_a_photo, size: 36, color: Colors.grey),
+                        Text("Select Product Images (একাধিক নেওয়া যাবে)", style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      ],
+                    ),
                   ),
                 ),
+
+                if (_imageFiles.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 90,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _imageFiles.length,
+                      itemBuilder: (context, index) {
+                        final file = _imageFiles[index];
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 10),
+                          child: Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: kIsWeb
+                                    ? Image.network(file.path, width: 90, height: 90, fit: BoxFit.cover)
+                                    : Image.file(File(file.path), width: 90, height: 90, fit: BoxFit.cover),
+                              ),
+                              if (index == 0)
+                                Positioned(
+                                  bottom: 4,
+                                  left: 4,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
+                                    child: const Text("Cover", style: TextStyle(color: Colors.white, fontSize: 9)),
+                                  ),
+                                ),
+                              Positioned(
+                                top: 2,
+                                right: 2,
+                                child: GestureDetector(
+                                  onTap: () => setState(() => _imageFiles = List.from(_imageFiles)..removeAt(index)),
+                                  child: const CircleAvatar(
+                                    radius: 10,
+                                    backgroundColor: Colors.black54,
+                                    child: Icon(Icons.close, size: 12, color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
 
                 const SizedBox(height: 20),
                 TextField(controller: _name, decoration: const InputDecoration(labelText: "Product Name", border: OutlineInputBorder())),
@@ -181,6 +263,8 @@ class _VendorDashboardState extends State<VendorDashboard> {
 
                 const SizedBox(height: 15),
                 TextField(controller: _price, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Price (৳)", border: OutlineInputBorder())),
+                const SizedBox(height: 15),
+                TextField(controller: _stock, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Stock Quantity", border: OutlineInputBorder(), helperText: "কয়টা পিস স্টকে আছে")),
                 const SizedBox(height: 15),
                 TextField(controller: _desc, maxLines: 3, decoration: const InputDecoration(labelText: "Description", border: OutlineInputBorder())),
                 

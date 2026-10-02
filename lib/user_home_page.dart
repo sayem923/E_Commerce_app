@@ -3,6 +3,8 @@ import 'package:e_commerce_app/vendor_product_details_page.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:carousel_slider_plus/carousel_slider_plus.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'dart:async';
 
 // আপনার প্রোজেক্টের ফাইল পাথগুলো চেক করে নিন
 import 'product_details_page.dart';
@@ -10,6 +12,10 @@ import 'profile_page.dart';
 import 'cart_page.dart';
 // 🎯 ভেন্ডর অর্ডার (টাইমার পেজ) ফাইলটি ইম্পোর্ট করা হলো
 import 'vendor_orders_page.dart'; 
+import 'wishlist_page.dart';
+import 'notifications_page.dart';
+import 'skeleton_widgets.dart';
+import 'review_widgets.dart';
 
 class UserHomePage extends StatefulWidget {
   const UserHomePage({super.key});
@@ -25,7 +31,7 @@ class _UserHomePageState extends State<UserHomePage> {
   // পেজ লিস্ট
   final List<Widget> _pages = [
     const UserHomeView(),        
-    const Center(child: Text("My Wishlist", style: TextStyle(fontSize: 20))), 
+    const WishlistPage(), 
     const CartPage(),            
     const ProfilePage(), // ইনডেক্স ৩ (প্রোফাইল পেজ)
   ];
@@ -109,6 +115,15 @@ class _UserHomePageState extends State<UserHomePage> {
             }
           ),
 
+          ListTile(
+            leading: NotificationBadge(child: Icon(Icons.notifications_none, color: Colors.orange[800])),
+            title: const Text("Notifications"),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(context, MaterialPageRoute(builder: (context) => const NotificationsPage()));
+            },
+          ),
+
           // 🎯 নতুন কানেকশন বাটন: ভেন্ডর তার অর্ডারের লাইভ টাইমার দেখতে এই অপশনে ক্লিক করবে
           // ListTile(
           //   leading: Icon(Icons.storefront_rounded, color: Colors.orange[800]), 
@@ -160,10 +175,104 @@ class UserHomeView extends StatefulWidget {
 class _UserHomeViewState extends State<UserHomeView> {
   final supabase = Supabase.instance.client;
   String _selectedCategory = "All";
+  String _searchQuery = "";
+
+  // 📄 Pagination state (products এর জন্য — realtime stream এর বদলে)
+  final List<Map<String, dynamic>> _products = [];
+  bool _isInitialLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+  int _currentPage = 0;
+  static const int _pageSize = 12;
+  final ScrollController _scrollController = ScrollController();
+  Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchProducts(reset: true);
+
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 300 &&
+          !_isLoadingMore &&
+          _hasMore) {
+        _fetchProducts();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _fetchProducts({bool reset = false}) async {
+    if (reset) {
+      setState(() {
+        _isInitialLoading = _products.isEmpty;
+        _currentPage = 0;
+        _hasMore = true;
+        _products.clear();
+      });
+    } else {
+      if (_isLoadingMore || !_hasMore) return;
+      setState(() => _isLoadingMore = true);
+    }
+
+    try {
+      var query = supabase.from('products').select();
+
+      if (_selectedCategory != "All") {
+        query = query.eq('category', _selectedCategory);
+      }
+
+      if (_searchQuery.isNotEmpty) {
+        query = query.ilike('name', '%$_searchQuery%');
+      }
+
+      final from = _currentPage * _pageSize;
+      final to = from + _pageSize - 1;
+
+      final data = await query.order('id', ascending: false).range(from, to);
+      final newItems = List<Map<String, dynamic>>.from(data);
+
+      if (mounted) {
+        setState(() {
+          _products.addAll(newItems);
+          _hasMore = newItems.length == _pageSize;
+          _currentPage++;
+          _isInitialLoading = false;
+          _isLoadingMore = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Product fetch error: $e");
+      if (mounted) {
+        setState(() {
+          _isInitialLoading = false;
+          _isLoadingMore = false;
+        });
+      }
+    }
+  }
+
+  void _onCategorySelected(String cat) {
+    setState(() => _selectedCategory = cat);
+    _fetchProducts(reset: true);
+  }
+
+  void _onSearchChanged(String value) {
+    _searchQuery = value.trim();
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 400), () {
+      _fetchProducts(reset: true);
+    });
+  }
 
   Future<void> _handleRefresh() async {
-    setState(() {});
-    await Future.delayed(const Duration(seconds: 1)); 
+    await _fetchProducts(reset: true);
   }
 
   Future<void> _onBannerClick(String productId) async {
@@ -205,7 +314,6 @@ class _UserHomeViewState extends State<UserHomeView> {
   @override
   Widget build(BuildContext context) {
     final user = supabase.auth.currentUser;
-    final productStream = supabase.from('products').stream(primaryKey: ['id']);
     final bannerStream = supabase.from('banners').stream(primaryKey: ['id']);
     final profileStream = supabase.from('profiles').stream(primaryKey: ['id']).eq('id', user?.id ?? '');
 
@@ -214,6 +322,7 @@ class _UserHomeViewState extends State<UserHomeView> {
         color: Colors.orange[800],
         onRefresh: _handleRefresh,
         child: SingleChildScrollView(
+          controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(), 
           child: Container(
             constraints: BoxConstraints(
@@ -260,6 +369,20 @@ class _UserHomeViewState extends State<UserHomeView> {
 
                 const SizedBox(height: 25),
                 const Text("New Arrivals", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 15),
+
+                TextField(
+                  onChanged: _onSearchChanged,
+                  decoration: InputDecoration(
+                    hintText: "Search products...",
+                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+                  ),
+                ),
+
                 const SizedBox(height: 20),
 
                 StreamBuilder<List<Map<String, dynamic>>>(
@@ -278,11 +401,12 @@ class _UserHomeViewState extends State<UserHomeView> {
                         },
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(20),
-                          child: Image.network(
-                            banner['image_url'], 
+                          child: CachedNetworkImage(
+                            imageUrl: banner['image_url'], 
                             fit: BoxFit.cover, 
                             width: double.infinity,
-                            errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.broken_image, size: 40)),
+                            placeholder: (context, url) => Container(color: Colors.grey.shade100),
+                            errorWidget: (context, url, error) => const Center(child: Icon(Icons.broken_image, size: 40)),
                           ),
                         ),
                       )).toList(),
@@ -301,7 +425,7 @@ class _UserHomeViewState extends State<UserHomeView> {
                     children: ["All", "Gadgets", "Fashion", "Book", "Phones", "Others"].map((cat) {
                       bool isSelected = _selectedCategory == cat;
                       return GestureDetector(
-                        onTap: () => setState(() => _selectedCategory = cat),
+                        onTap: () => _onCategorySelected(cat),
                         child: Container(
                           margin: const EdgeInsets.only(right: 10),
                           padding: const EdgeInsets.symmetric(horizontal: 22),
@@ -333,34 +457,37 @@ class _UserHomeViewState extends State<UserHomeView> {
                 const Text("Popular Products", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 15),
 
-                StreamBuilder<List<Map<String, dynamic>>>(
-                  stream: productStream,
-                  builder: (context, snapshot) {
-                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(color: Colors.orange));
-                    
-                    final filtered = _selectedCategory == "All"
-                        ? snapshot.data!
-                        : snapshot.data!.where((p) => p['category'] == _selectedCategory).toList();
+                if (_isInitialLoading)
+                  const ProductGridSkeleton()
+                else if (_products.isEmpty)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 30),
+                      child: Text("No products found!", style: TextStyle(color: Colors.grey)),
+                    ),
+                  )
+                else
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2, childAspectRatio: 0.75, mainAxisSpacing: 15, crossAxisSpacing: 15),
+                    itemCount: _products.length,
+                    itemBuilder: (context, index) => _ProductCard(product: _products[index]),
+                  ),
 
-                    if (filtered.isEmpty) {
-                      return const Center(
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(vertical: 30),
-                          child: Text("No products found in this category!", style: TextStyle(color: Colors.grey)),
-                        ),
-                      );
-                    }
+                if (_isLoadingMore)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 20),
+                    child: Center(child: CircularProgressIndicator(color: Colors.orange, strokeWidth: 2)),
+                  ),
 
-                    return GridView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2, childAspectRatio: 0.75, mainAxisSpacing: 15, crossAxisSpacing: 15),
-                      itemCount: filtered.length,
-                      itemBuilder: (context, index) => _ProductCard(product: filtered[index]),
-                    );
-                  },
-                ),
+                if (!_hasMore && _products.isNotEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 20),
+                    child: Center(child: Text("আর কোনো প্রোডাক্ট নেই", style: TextStyle(color: Colors.grey, fontSize: 13))),
+                  ),
+
                 const SizedBox(height: 40),
               ],
             ),
@@ -377,6 +504,9 @@ class _ProductCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final int stock = int.tryParse(product['stock']?.toString() ?? '0') ?? 0;
+    final bool outOfStock = stock <= 0;
+
     return InkWell(
       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProductDetailsPage(product: product))),
       child: Container(
@@ -386,14 +516,41 @@ class _ProductCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                child: Image.network(
-                  product['image_url'] ?? '', 
-                  fit: BoxFit.cover, 
-                  width: double.infinity,
-                  errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
-                ),
+              child: Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                    child: CachedNetworkImage(
+                      imageUrl: product['image_url'] ?? '', 
+                      fit: BoxFit.cover, 
+                      width: double.infinity,
+                      height: double.infinity,
+                      placeholder: (context, url) => Container(color: Colors.grey.shade100),
+                      errorWidget: (context, url, error) => const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
+                    ),
+                  ),
+                  if (outOfStock)
+                    Positioned.fill(
+                      child: Container(
+                        decoration: const BoxDecoration(color: Colors.black45),
+                        alignment: Alignment.center,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(6)),
+                          child: const Text("OUT OF STOCK", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ),
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                      child: WishlistToggleButton(product: product, size: 18),
+                    ),
+                  ),
+                ],
               ),
             ),
             Padding(
@@ -404,6 +561,19 @@ class _ProductCard extends StatelessWidget {
                   Text(product['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14), maxLines: 1),
                   const SizedBox(height: 4),
                   Text("৳ ${product['price']}", style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                  if ((double.tryParse(product['avg_rating']?.toString() ?? '0') ?? 0) > 0) ...[
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        StarRatingDisplay(rating: double.tryParse(product['avg_rating']?.toString() ?? '0') ?? 0, size: 12),
+                        const SizedBox(width: 4),
+                        Text(
+                          "(${product['review_count'] ?? 0})",
+                          style: const TextStyle(fontSize: 10, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             )

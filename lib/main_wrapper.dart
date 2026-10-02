@@ -19,7 +19,6 @@ class _MainWrapperState extends State<MainWrapper> {
     _checkUserRole();
   }
 
-  // সুপাবেস মেটাডাটা থেকে ইউজারের রোল বের করা
   void _checkUserRole() {
     final user = Supabase.instance.client.auth.currentUser;
     if (user != null) {

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart'; // সুপাবেস ইম্পোর্ট
 import 'signup_page.dart';
-import 'main_wrapper.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -29,19 +28,13 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       // সুপাবেস দিয়ে লগইন
-      final response = await Supabase.instance.client.auth.signInWithPassword(
+      // signInWithPassword সফল হলে Supabase নিজেই auth-state ইভেন্ট পাঠায়,
+      // যেটা AuthGate শুনে (listen করে) স্বয়ংক্রিয়ভাবে MainWrapper-এ পাঠিয়ে দেবে।
+      // তাই এখানে আলাদা করে Navigator দিয়ে পেজ পাল্টানোর দরকার নেই।
+      await Supabase.instance.client.auth.signInWithPassword(
         email: _emailController.text.trim(),
         password: _passController.text.trim(),
       );
-
-      if (response.user != null) {
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const MainWrapper()),
-          );
-        }
-      }
     } on AuthException catch (error) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(error.message), backgroundColor: Colors.red),
@@ -52,6 +45,35 @@ class _LoginPageState extends State<LoginPage> {
       );
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // পাসওয়ার্ড রিসেট ফাংশন
+  Future<void> _handleForgotPassword() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("আগে Email ফিল্ডে আপনার ইমেইল লিখুন"), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    try {
+      await Supabase.instance.client.auth.resetPasswordForEmail(email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("পাসওয়ার্ড রিসেট লিংক আপনার ইমেইলে পাঠানো হয়েছে!"),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $error"), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 
@@ -90,7 +112,14 @@ class _LoginPageState extends State<LoginPage> {
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(15))
                 )
               ),
-              const SizedBox(height: 30),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _handleForgotPassword,
+                  child: const Text("Forgot Password?", style: TextStyle(color: Colors.grey)),
+                ),
+              ),
+              const SizedBox(height: 10),
               
               // লোডিং হলে ইন্ডিকেটর দেখাবে, নাহলে বাটন
               _isLoading 

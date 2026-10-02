@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'main_wrapper.dart'; // আপনার মেইন অ্যাপ র‍্যাপার যেখানে হোম পেজে যায়
 
 // --- ১. সাইনআপ পেজ (যেখানে ইউজার তথ্য দিবে) ---
 class SignupPage extends StatefulWidget {
@@ -138,20 +137,14 @@ class _OTPVerifyPageState extends State<OTPVerifyPage> {
     setState(() => _isLoading = true);
     try {
       // Supabase-এর verifyOTP মেথড
-      final response = await Supabase.instance.client.auth.verifyOTP(
+      // verifyOTP সফল হলে Supabase auto-signIn করে auth-state ইভেন্ট পাঠায়,
+      // AuthGate সেটা শুনে (listen করে) স্বয়ংক্রিয়ভাবে MainWrapper-এ পাঠিয়ে দেবে।
+      // তাই এখানে Navigator দিয়ে আলাদা করে পেজ পাল্টানোর দরকার নেই।
+      await Supabase.instance.client.auth.verifyOTP(
         email: widget.email,
         token: _otpController.text.trim(),
         type: OtpType.signup,
       );
-
-      if (response.user != null && mounted) {
-        // ভেরিফিকেশন সফল হলে মেইন অ্যাপে পাঠিয়ে দিবে
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => const MainWrapper()),
-          (route) => false,
-        );
-      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Invalid OTP: $e")));
     } finally {

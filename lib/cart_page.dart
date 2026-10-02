@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'order_page.dart'; 
+import 'payment_dialog.dart';
+import 'skeleton_widgets.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -30,6 +33,38 @@ class _CartPageState extends State<CartPage> {
     final user = _supabase.auth.currentUser;
     if (user == null || cartItems.isEmpty) return;
 
+    // চেকআউটের আগে shipping address সেট আছে কিনা চেক করা হচ্ছে
+    String shippingAddress = '';
+    String shippingPhone = '';
+    try {
+      final profile = await _supabase
+          .from('profiles')
+          .select('address, phone')
+          .eq('id', user.id)
+          .maybeSingle();
+      shippingAddress = (profile?['address'] ?? '').toString().trim();
+      shippingPhone = (profile?['phone'] ?? '').toString().trim();
+    } catch (e) {
+      debugPrint("Profile fetch error before order: $e");
+    }
+
+    if (shippingAddress.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("অর্ডার করার আগে আপনার প্রোফাইলে Shipping Address যোগ করুন!"),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    // পেমেন্ট মেথড বেছে নেওয়া (COD / bKash / Nagad)
+    if (!context.mounted) return;
+    final paymentInfo = await showPaymentMethodDialog(context);
+    if (paymentInfo == null) return; // user cancel করেছে
+
+    if (!context.mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -37,56 +72,77 @@ class _CartPageState extends State<CartPage> {
     );
 
     try {
+      final List<String> skippedItems = [];
+
       for (var item in cartItems) {
         final price = double.tryParse(item['price']?.toString() ?? '0.0') ?? 0.0;
         final qty = int.tryParse(item['quantity']?.toString() ?? '1') ?? 1;
-        final String vendorId = item['vendor_id']?.toString() ?? '';
+        final productId = int.tryParse(item['product_id']?.toString() ?? '0') ?? 0;
 
-        if (vendorId.isEmpty) {
-          throw "কার্টের এই প্রোডাক্টটিতে কোনো Vendor ID পাওয়া যায়নি!";
+        // 📦 আগে stock কমানোর চেষ্টা — race-condition-safe (DB function দিয়ে)
+        final stockOk = await _supabase.rpc('decrement_stock', params: {
+          'p_product_id': productId,
+          'p_qty': qty,
+        });
+
+        if (stockOk != true) {
+          skippedItems.add(item['product_name']?.toString() ?? 'Product');
+          continue; // এই আইটেমটা বাদ দিয়ে বাকিগুলো নিয়ে এগিয়ে যাওয়া হচ্ছে
         }
 
-        // 💡 এখানে ইনসার্ট করার সময় কোনো কলামের নাম ভুল হলে সুপাবেস সরাসরি ক্যাচ (Catch) এ পাঠিয়ে দেবে
+        // 🎯 vendor_id এখন ইচ্ছাকৃতভাবে দেওয়া হচ্ছে না — order প্রথমে কোনো
+        // vendor-এর সাথে বাঁধা থাকবে না, সব vendor notification পাবে, যে আগে Accept
+        // করবে সে-ই এই order-এর দায়িত্ব নেবে।
         await _supabase.from('orders').insert({
           'user_id': user.id,
-          'vendor_id': vendorId, 
-          'product_id': int.tryParse(item['product_id']?.toString() ?? '0') ?? 0,
+          'product_id': productId,
           'product_name': item['product_name'] ?? 'Product',
           'price': price,
           'quantity': qty,
           'total_amount': (price * qty),
           'image_url': item['image_url'] ?? '',
           'status': 'pending',
+          'shipping_address': shippingAddress,
+          'shipping_phone': shippingPhone,
+          'payment_method': paymentInfo['payment_method'],
+          'payment_status': paymentInfo['payment_status'],
+          'transaction_id': paymentInfo['transaction_id'],
           'created_at': DateTime.now().toIso8601String(),
           'expires_at': DateTime.now().add(const Duration(minutes: 30)).toIso8601String(),
         });
+
+        // এই আইটেমের অর্ডার হয়ে গেছে, তাই cart থেকে সরিয়ে দেওয়া হচ্ছে
+        await _supabase.from('cart').delete().eq('id', item['id']);
       }
 
-      // অর্ডার সম্পূর্ণ হওয়ার পর কার্ট খালি করা
-      await _supabase.from('cart').delete().eq('user_id', user.id);
 
       if (!context.mounted) return;
-      Navigator.pop(context); // লোডিং ডায়ালগ বন্ধ
+      Navigator.pop(context); 
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Order Placed Successfully!"), backgroundColor: Colors.green),
-      );
-      
-      // ✅ শুধু এইটুকু রাখুন (যা অলরেডি কোডে আছে):
-ScaffoldMessenger.of(context).showSnackBar(
-  const SnackBar(content: Text("Order Placed Successfully!"), backgroundColor: Colors.green),
-);
-// পেজ চেঞ্জের কোড না থাকায় ইউজার কার্ট পেজেই থেকে যাবে।
+      if (skippedItems.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Order Placed Successfully!"), backgroundColor: Colors.green),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("বাকি প্রোডাক্ট অর্ডার হয়েছে, কিন্তু এগুলো Stock-এ নেই: ${skippedItems.join(', ')}"),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+
     } catch (e) {
-      if (context.mounted) Navigator.pop(context); // লোডিং ডায়ালগ বন্ধ
+      if (context.mounted) Navigator.pop(context); 
       
-      // 🚨 এই মেসেজটি আপনার স্ক্রিনে ভেসে উঠবে এবং বলে দেবে আসল সমস্যা কোথায়!
+
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text("Database Error: $e"), 
             backgroundColor: Colors.redAccent,
-            duration: const Duration(seconds: 10), // দেখার সুবিধার্থে ১০ সেকেন্ড থাকবে
+            duration: const Duration(seconds: 10), 
           ),
         );
       }
@@ -120,7 +176,7 @@ ScaffoldMessenger.of(context).showSnackBar(
         stream: cartStream,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator(color: Colors.orange));
+            return const ListSkeleton();
           }
           
           if (snapshot.hasError) {
@@ -155,15 +211,23 @@ ScaffoldMessenger.of(context).showSnackBar(
           return Column(
             children: [
               Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  itemCount: cartItems.length,
-                  itemBuilder: (context, index) {
-                    final item = cartItems[index];
-                    
-                    final int itemId = int.tryParse(item['id']?.toString() ?? '0') ?? 0;
-                    final int qty = int.tryParse(item['quantity']?.toString() ?? '1') ?? 1;
-                    final String productName = item['product_name']?.toString() ?? 'Unknown Product';
+                child: RefreshIndicator(
+                  color: Colors.orange[800],
+                  onRefresh: () async {
+                    // এই লিস্ট আগে থেকেই realtime stream-এ live থাকে,
+                    // তাই শুধু pull-to-refresh এর ছোট্ট animation দেখানো হচ্ছে
+                    await Future.delayed(const Duration(milliseconds: 500));
+                  },
+                  child: ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    itemCount: cartItems.length,
+                    itemBuilder: (context, index) {
+                      final item = cartItems[index];
+                      
+                      final int itemId = int.tryParse(item['id']?.toString() ?? '0') ?? 0;
+                      final int qty = int.tryParse(item['quantity']?.toString() ?? '1') ?? 1;
+                      final String productName = item['product_name']?.toString() ?? 'Unknown Product';
                     final double price = double.tryParse(item['price']?.toString() ?? '0.0') ?? 0.0;
                     final String imageUrl = item['image_url']?.toString() ?? '';
 
@@ -185,14 +249,12 @@ ScaffoldMessenger.of(context).showSnackBar(
                                 height: 75,
                                 color: Colors.grey.shade100,
                                 child: imageUrl.isNotEmpty
-                                    ? Image.network(
-                                        imageUrl,
+                                    ? CachedNetworkImage(
+                                        imageUrl: imageUrl,
                                         fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported, color: Colors.grey),
-                                        loadingBuilder: (context, child, loadingProgress) {
-                                          if (loadingProgress == null) return child;
-                                          return const Center(child: CircularProgressIndicator(color: Colors.orange, strokeWidth: 2));
-                                        },
+                                        errorWidget: (_, __, ___) => const Icon(Icons.image_not_supported, color: Colors.grey),
+                                        placeholder: (context, url) =>
+                                            const Center(child: CircularProgressIndicator(color: Colors.orange, strokeWidth: 2)),
                                       )
                                     : const Icon(Icons.image, color: Colors.grey),
                               ),
@@ -243,6 +305,7 @@ ScaffoldMessenger.of(context).showSnackBar(
                       ),
                     );
                   },
+                  ),
                 ),
               ),
               Container(

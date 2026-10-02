@@ -3,12 +3,20 @@ import 'package:e_commerce_app/vendor_product_details_page.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:carousel_slider_plus/carousel_slider_plus.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'dart:async';
 
 import 'product_details_page.dart';
 import 'vendor_dashboard.dart';
 import 'profile_page.dart';
 import 'cart_page.dart';
 import 'vendor_orders_page.dart'; 
+import 'wishlist_page.dart';
+import 'my_products_page.dart';
+import 'notifications_page.dart';
+import 'sales_analytics_page.dart';
+import 'skeleton_widgets.dart';
+import 'review_widgets.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -25,9 +33,9 @@ class _HomePageState extends State<HomePage> {
 
   final List<Widget> _pages = [
     const HomeView(),           
-    const Center(child: Text("Wishlist", style: TextStyle(fontSize: 20))), 
+    const WishlistPage(), 
     const CartPage(),           
-    const Center(child: Text("Notifications", style: TextStyle(fontSize: 20))), 
+    const NotificationsPage(), 
   ];
 
   @override
@@ -96,7 +104,9 @@ class _HomePageState extends State<HomePage> {
                   onPressed: () => setState(() => _selectedIndex = 2),
                 ),
                 IconButton(
-                  icon: Icon(Icons.notifications_none, color: _selectedIndex == 3 ? Colors.orange[800] : Colors.grey),
+                  icon: NotificationBadge(
+                    child: Icon(Icons.notifications_none, color: _selectedIndex == 3 ? Colors.orange[800] : Colors.grey),
+                  ),
                   onPressed: () => setState(() => _selectedIndex = 3),
                 ),
               ],
@@ -146,7 +156,23 @@ class _HomePageState extends State<HomePage> {
             }
           ),
 
-          ListTile(leading: const Icon(Icons.inventory), title: const Text("Stock Inventory"), onTap: () {}),
+          ListTile(
+            leading: const Icon(Icons.inventory),
+            title: const Text("Stock Inventory"),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(context, MaterialPageRoute(builder: (context) => const MyProductsPage()));
+            },
+          ),
+
+          ListTile(
+            leading: const Icon(Icons.bar_chart_rounded),
+            title: const Text("Sales Analytics"),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(context, MaterialPageRoute(builder: (context) => const SalesAnalyticsPage()));
+            },
+          ),
           
           const Divider(),
           ListTile(
@@ -187,26 +213,119 @@ class HomeView extends StatefulWidget {
 class _HomeViewState extends State<HomeView> {
   final supabase = Supabase.instance.client;
   String _selectedCategory = "All";
+  String _searchQuery = "";
 
   final List<String> _definedCategories = ["Gadgets", "Fashion", "Book", "Phones"];
 
-  late final Stream<List<Map<String, dynamic>>> _productStream;
   late final Stream<List<Map<String, dynamic>>> _bannerStream;
   late final Stream<List<Map<String, dynamic>>> _profileStream;
+
+  // 📄 Pagination state (products এর জন্য — realtime stream এর বদলে)
+  final List<Map<String, dynamic>> _products = [];
+  bool _isInitialLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+  int _currentPage = 0;
+  static const int _pageSize = 12;
+  final ScrollController _scrollController = ScrollController();
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
     final user = supabase.auth.currentUser;
     
-    _productStream = supabase.from('products').stream(primaryKey: ['id']);
     _bannerStream = supabase.from('banners').stream(primaryKey: ['id']);
     _profileStream = supabase.from('profiles').stream(primaryKey: ['id']).eq('id', user?.id ?? '');
+
+    _fetchProducts(reset: true);
+
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 300 &&
+          !_isLoadingMore &&
+          _hasMore) {
+        _fetchProducts();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  // 📄 নির্দিষ্ট page-এর প্রোডাক্ট আনে (category/search filter সহ)। reset:true দিলে
+  // প্রথম পাতা থেকে নতুন করে লোড হবে (category/search বদলালে বা pull-to-refresh করলে)।
+  Future<void> _fetchProducts({bool reset = false}) async {
+    if (reset) {
+      setState(() {
+        _isInitialLoading = _products.isEmpty;
+        _currentPage = 0;
+        _hasMore = true;
+        _products.clear();
+      });
+    } else {
+      if (_isLoadingMore || !_hasMore) return;
+      setState(() => _isLoadingMore = true);
+    }
+
+    try {
+      var query = supabase.from('products').select();
+
+      if (_selectedCategory == "Others") {
+        final excluded = _definedCategories.map((c) => '"$c"').join(",");
+        query = query.not('category', 'in', '($excluded)');
+      } else if (_selectedCategory != "All") {
+        query = query.eq('category', _selectedCategory);
+      }
+
+      if (_searchQuery.isNotEmpty) {
+        query = query.ilike('name', '%$_searchQuery%');
+      }
+
+      final from = _currentPage * _pageSize;
+      final to = from + _pageSize - 1;
+
+      final data = await query.order('id', ascending: false).range(from, to);
+      final newItems = List<Map<String, dynamic>>.from(data);
+
+      if (mounted) {
+        setState(() {
+          _products.addAll(newItems);
+          _hasMore = newItems.length == _pageSize;
+          _currentPage++;
+          _isInitialLoading = false;
+          _isLoadingMore = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Product fetch error: $e");
+      if (mounted) {
+        setState(() {
+          _isInitialLoading = false;
+          _isLoadingMore = false;
+        });
+      }
+    }
+  }
+
+  void _onCategorySelected(String cat) {
+    setState(() => _selectedCategory = cat);
+    _fetchProducts(reset: true);
+  }
+
+  void _onSearchChanged(String value) {
+    _searchQuery = value.trim();
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 400), () {
+      _fetchProducts(reset: true);
+    });
   }
 
   Future<void> _handleRefresh() async {
-    setState(() {});
-    await Future.delayed(const Duration(seconds: 1)); 
+    await _fetchProducts(reset: true);
   }
 
   Future<void> _onBannerClick(dynamic productId) async {
@@ -263,6 +382,7 @@ class _HomeViewState extends State<HomeView> {
         color: Colors.orange[800],
         onRefresh: _handleRefresh,
         child: SingleChildScrollView(
+          controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(), 
           child: Container(
             constraints: BoxConstraints(
@@ -302,6 +422,20 @@ class _HomeViewState extends State<HomeView> {
 
                 const SizedBox(height: 25),
                 const Text("New Arrivals", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 15),
+
+                TextField(
+                  onChanged: _onSearchChanged,
+                  decoration: InputDecoration(
+                    hintText: "Search products...",
+                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+                  ),
+                ),
+
                 const SizedBox(height: 20),
 
                 StreamBuilder<List<Map<String, dynamic>>>(
@@ -318,7 +452,13 @@ class _HomeViewState extends State<HomeView> {
                         },
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(20),
-                          child: Image.network(banner['image_url'], fit: BoxFit.cover, width: double.infinity),
+                          child: CachedNetworkImage(
+                            imageUrl: banner['image_url'],
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            placeholder: (context, url) => Container(color: Colors.grey.shade100),
+                            errorWidget: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.grey),
+                          ),
                         ),
                       )).toList(),
                     );
@@ -336,7 +476,7 @@ class _HomeViewState extends State<HomeView> {
                     children: uiCategories.map((cat) {
                       bool isSelected = _selectedCategory.toLowerCase() == cat.toLowerCase();
                       return GestureDetector(
-                        onTap: () => setState(() => _selectedCategory = cat),
+                        onTap: () => _onCategorySelected(cat),
                         child: Container(
                           margin: const EdgeInsets.only(right: 10),
                           padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
@@ -358,43 +498,37 @@ class _HomeViewState extends State<HomeView> {
                 const Text("Popular Products", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 15),
 
-                StreamBuilder<List<Map<String, dynamic>>>(
-                  stream: _productStream,
-                  builder: (context, snapshot) {
-                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(color: Colors.orange));
-                    
-                    List<Map<String, dynamic>> filtered;
+                if (_isInitialLoading)
+                  const ProductGridSkeleton()
+                else if (_products.isEmpty)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 30),
+                      child: Text("No products found.", style: TextStyle(color: Colors.grey)),
+                    ),
+                  )
+                else
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2, childAspectRatio: 0.75, mainAxisSpacing: 15, crossAxisSpacing: 15),
+                    itemCount: _products.length,
+                    itemBuilder: (context, index) => _ProductCard(product: _products[index]),
+                  ),
 
-                    if (_selectedCategory == "All") {
-                      filtered = snapshot.data!;
-                    } else if (_selectedCategory == "Others") {
-                      filtered = snapshot.data!.where((p) {
-                        final pCat = (p['category'] ?? '').toString().trim().toLowerCase();
-                        return !_definedCategories.any((definedCat) => definedCat.toLowerCase() == pCat);
-                      }).toList();
-                    } else {
-                      filtered = snapshot.data!.where((p) => (p['category'] ?? '').toString().toLowerCase() == _selectedCategory.toLowerCase()).toList();
-                    }
+                if (_isLoadingMore)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 20),
+                    child: Center(child: CircularProgressIndicator(color: Colors.orange, strokeWidth: 2)),
+                  ),
 
-                    if (filtered.isEmpty) {
-                      return const Center(
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(vertical: 30),
-                          child: Text("No products found in this category.", style: TextStyle(color: Colors.grey)),
-                        ),
-                      );
-                    }
+                if (!_hasMore && _products.isNotEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 20),
+                    child: Center(child: Text("আর কোনো প্রোডাক্ট নেই", style: TextStyle(color: Colors.grey, fontSize: 13))),
+                  ),
 
-                    return GridView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2, childAspectRatio: 0.75, mainAxisSpacing: 15, crossAxisSpacing: 15),
-                      itemCount: filtered.length,
-                      itemBuilder: (context, index) => _ProductCard(product: filtered[index]),
-                    );
-                  },
-                ),
                 const SizedBox(height: 40),
               ],
             ),
@@ -411,6 +545,9 @@ class _ProductCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final int stock = int.tryParse(product['stock']?.toString() ?? '0') ?? 0;
+    final bool outOfStock = stock <= 0;
+
     return InkWell(
       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => VendorProductDetailsPage(product: product))),
       child: Container(
@@ -419,14 +556,63 @@ class _ProductCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(child: ClipRRect(borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-              child: Image.network(product['image_url'] ?? '', fit: BoxFit.cover, width: double.infinity))),
+            Expanded(
+              child: Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                    child: CachedNetworkImage(
+                      imageUrl: product['image_url'] ?? '',
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: double.infinity,
+                      placeholder: (context, url) => Container(color: Colors.grey.shade100),
+                      errorWidget: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.grey),
+                    ),
+                  ),
+                  if (outOfStock)
+                    Positioned.fill(
+                      child: Container(
+                        decoration: const BoxDecoration(color: Colors.black45),
+                        alignment: Alignment.center,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(6)),
+                          child: const Text("OUT OF STOCK", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ),
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                      child: WishlistToggleButton(product: product, size: 18),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.all(12),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(product['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14), maxLines: 1),
                 const SizedBox(height: 4),
                 Text("৳ ${product['price']}", style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+                if ((double.tryParse(product['avg_rating']?.toString() ?? '0') ?? 0) > 0) ...[
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      StarRatingDisplay(rating: double.tryParse(product['avg_rating']?.toString() ?? '0') ?? 0, size: 12),
+                      const SizedBox(width: 4),
+                      Text(
+                        "(${product['review_count'] ?? 0})",
+                        style: const TextStyle(fontSize: 10, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                ],
               ]),
             )
           ],

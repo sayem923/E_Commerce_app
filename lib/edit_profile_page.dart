@@ -12,6 +12,8 @@ class EditProfilePage extends StatefulWidget {
 class _EditProfilePageState extends State<EditProfilePage> {
   final _supabase = Supabase.instance.client;
   final _nameController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _addressController = TextEditingController();
   bool _isLoading = false;
   String? _avatarUrl;
 
@@ -29,6 +31,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
       final data = await _supabase.from('profiles').select().eq('id', user.id).single();
       setState(() {
         _nameController.text = data['full_name'] ?? "";
+        _phoneController.text = data['phone'] ?? "";
+        _addressController.text = data['address'] ?? "";
         _avatarUrl = data['avatar_url'];
       });
     } catch (e) {
@@ -56,7 +60,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       final publicUrl = _supabase.storage.from('avatars').getPublicUrl(path);
       
       setState(() {
-        // 🔄 ইমেজ রিফ্রেশ ক্যাশ বাগ এড়াতে টাইমস্ট্যাম্প যোগ করা হয়েছে
+        
         _avatarUrl = "$publicUrl?t=${DateTime.now().millisecondsSinceEpoch}";
       });
       
@@ -76,7 +80,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       final user = _supabase.auth.currentUser;
       if (user == null) return;
 
-      // ইউআরএল থেকে ক্যাশ কোয়েরি স্ট্রিং রিমুভ করে ডাটাবেজে পিওর লিঙ্ক সেভ করা হচ্ছে
+      
       String? cleanUrl = _avatarUrl;
       if (cleanUrl != null && cleanUrl.contains('?t=')) {
         cleanUrl = cleanUrl.split('?t=')[0];
@@ -84,6 +88,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
       await _supabase.from('profiles').update({
         'full_name': _nameController.text.trim(),
+        'phone': _phoneController.text.trim(),
+        'address': _addressController.text.trim(),
         'avatar_url': cleanUrl,
       }).eq('id', user.id);
 
@@ -96,6 +102,14 @@ class _EditProfilePageState extends State<EditProfilePage> {
     } finally {
       setState(() => _isLoading = false);
     }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _phoneController.dispose();
+    _addressController.dispose();
+    super.dispose();
   }
 
   @override
@@ -141,6 +155,30 @@ class _EditProfilePageState extends State<EditProfilePage> {
               decoration: InputDecoration(
                 labelText: "Full Name",
                 prefixIcon: const Icon(Icons.person_outline),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+              ),
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: _phoneController,
+              keyboardType: TextInputType.phone,
+              decoration: InputDecoration(
+                labelText: "Phone Number",
+                prefixIcon: const Icon(Icons.phone_outlined),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+              ),
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: _addressController,
+              maxLines: 3,
+              decoration: InputDecoration(
+                labelText: "Shipping Address",
+                prefixIcon: const Icon(Icons.location_on_outlined),
                 filled: true,
                 fillColor: Colors.white,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),

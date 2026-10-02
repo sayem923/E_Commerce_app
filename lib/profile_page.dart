@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'login_page.dart'; 
-import 'vendor_orders_page.dart'; // 🎯 আপনার তৈরি করা অর্ডার পেজটি ইমপোর্ট করুন
-import 'edit_profile_page.dart';   // 🎯 এডিট প্রোফাইল পেজ ইমপোর্ট করুন
+import 'vendor_orders_page.dart'; 
+import 'edit_profile_page.dart';   
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -30,7 +30,7 @@ class _ProfilePageState extends State<ProfilePage> {
         centerTitle: true,
         backgroundColor: Colors.white,
         elevation: 0,
-        // 🛠️ অ্যাপবারে এডিট প্রোফাইল পেজে যাওয়ার জন্য বাটন যুক্ত করা হলো
+
         actions: [
           IconButton(
             icon: const Icon(Icons.edit_note_rounded, color: Colors.black87, size: 28),
@@ -84,12 +84,12 @@ class _ProfilePageState extends State<ProfilePage> {
                 
                 const SizedBox(height: 30),
 
-                // 🛠️ "My Orders" বাটনে ক্লিক করলে কাস্টমার হিসেবে ট্র্যাক পেজে নিয়ে যাবে
+              
                 _buildProfileItem(Icons.shopping_bag_outlined, "My Orders", () {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => const VendorOrdersPage(isVendor: false), // কাস্টমার ট্র্যাকিং ভিউ
+                      builder: (context) => const VendorOrdersPage(isVendor: false),
                     ),
                   );
                 }),
@@ -97,7 +97,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 _buildProfileItem(Icons.favorite_border, "Wishlist", () {}),
                 _buildProfileItem(Icons.location_on_outlined, "Shipping Address", () {}),
                 
-                // 🛠️ Settings বাটনে ক্লিক করলেও এডিট প্রোফাইলে যাওয়ার ব্যবস্থা করা হলো
+             
                 _buildProfileItem(Icons.settings_outlined, "Settings / Edit Profile", () {
                   Navigator.push(
                     context,
